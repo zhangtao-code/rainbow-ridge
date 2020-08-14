@@ -1,8 +1,6 @@
 package com.rainbow.bridge.core.base.filter;
 
 
-import com.rainbow.bridge.core.base.result.ResultType;
-
 import java.lang.annotation.Annotation;
 
 public abstract class AbstractFilter<U extends FilterEntity, V extends Annotation> {
@@ -25,7 +23,7 @@ public abstract class AbstractFilter<U extends FilterEntity, V extends Annotatio
      *
      * @return
      */
-    public abstract ResultType before(Object... object);
+    public abstract String before(Object... object);
 
     /**
      * 方法执行之后的收尾清扫

@@ -1,7 +1,7 @@
 package com.rainbow.bridge.core.base.filter;
 
 
-import com.rainbow.bridge.core.base.result.ResultType;
+import com.rainbow.bridge.core.base.FilterException;
 import org.apache.commons.collections4.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +11,7 @@ import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -20,61 +21,56 @@ public class BaseFilter {
     private static Logger logger = LoggerFactory.getLogger(BaseFilter.class);
     private static ConcurrentHashMap<String, List<AbstractFilter>> filterMap = new ConcurrentHashMap<>();
 
-    public ResultType before(Class clazz, Method method) throws Exception {
+    public boolean before(Class clazz, Method method) throws Exception {
         String key = getKey(clazz, method);
         List<AbstractFilter> list = filterMap.get(key);
         if (list == null) {
             list = filterMap.computeIfAbsent(key, str -> getFilter(clazz, method));
         }
-        ResultType error = null;
         int index = -1;
         for (AbstractFilter abstractFilter : list) {
             try {
                 index++;
-                error = abstractFilter.before();
+                String error = abstractFilter.before();
                 if (error != null) {
-                    break;
+                    after(list, index - 1, null);
                 }
+                return false;
+            } catch (FilterException filterException) {
+                throw filterException;
             } catch (Exception e) {
                 logger.error("filter error", e);
             }
         }
-        if (error == null) {
-            return null;
-        }
-        after(list, index,null);
-        return error;
+        return true;
     }
 
     private List<AbstractFilter> getFilter(Class myClass, Method myMethod) {
         List<Annotation> filter = new ArrayList<>();
-        List<Annotation> clazz = collectAnno(myClass);
-        List<Annotation> method = collectAnno(myMethod);
+        List<Annotation> clazz = collectAnnotation(myClass);
+        List<Annotation> method = collectAnnotation(myMethod);
         filter.addAll(clazz);
         filter.addAll(method);
-        Map<Class<? extends AbstractFilter>, List<AbstractFilter>> map = filter
+        Map<Class<? extends AbstractFilter>, AbstractFilter> map = filter
                 .stream()
                 .map(this::convert)
                 .filter(o -> o != null)
-                .collect(Collectors.groupingBy(AbstractFilter::getClass, LinkedHashMap::new, Collectors.toList()));
-        List<AbstractFilter> list = new ArrayList<>();
-        for (Map.Entry<Class<? extends AbstractFilter>, List<AbstractFilter>> classListEntry : map.entrySet()) {
-            List<AbstractFilter> filters = classListEntry.getValue();
-            Optional<AbstractFilter> reduce = filters.stream().reduce((af1, af2) -> af1.merge(af2.getFilter()));
-            if (reduce.isPresent()) {
-                list.add(reduce.get());
-            }
-        }
-        list = list.stream().sorted(Comparator.comparing(af -> af.getFilter().getOrder())).collect(Collectors.toList());
+                .collect(Collectors.toMap(AbstractFilter::getClass, Function.identity(), (a1, a2) -> a1.merge(a2.getFilter())));
+        List<AbstractFilter> list = map
+                .values()
+                .stream()
+                .sorted(Comparator.comparing(af -> af.getFilter().getOrder()))
+                .collect(Collectors.toList());
         return list;
     }
 
     /**
      * 拿到该元素身上所有和FilterAnno相关的注解
+     *
      * @param annotatedElement
      * @return
      */
-    private List<Annotation> collectAnno(AnnotatedElement annotatedElement) {
+    private List<Annotation> collectAnnotation(AnnotatedElement annotatedElement) {
         Annotation[] array = annotatedElement.getAnnotations();
         if (array == null) {
             return Collections.EMPTY_LIST;
@@ -85,13 +81,13 @@ public class BaseFilter {
             if (filterAnno != null) {
                 list.add(annotation);
             }
-
         }
         return list;
     }
 
     /**
      * 将注解转化为实体对象
+     *
      * @param annotation
      * @return
      */
@@ -115,16 +111,16 @@ public class BaseFilter {
         return null;
     }
 
-    public void after(Class myClass, Method myMethod,Object object) throws Exception {
+    public void after(Class myClass, Method myMethod, Object object) throws Exception {
         String key = getKey(myClass, myMethod);
         List<AbstractFilter> filters = filterMap.get(key);
         if (CollectionUtils.isEmpty(filters)) {
             return;
         }
-        after(filters, filters.size() - 1,object);
+        after(filters, filters.size() - 1, object);
     }
 
-    private void after(List<AbstractFilter> list, int endInclude,Object object) {
+    private void after(List<AbstractFilter> list, int endInclude, Object object) {
         for (int i = endInclude; i >= 0; i--) {
             AbstractFilter filter = list.get(i);
             try {
